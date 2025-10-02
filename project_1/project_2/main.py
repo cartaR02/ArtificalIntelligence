@@ -5,45 +5,79 @@ import math
 import os
 import csv
 from random import uniform
+from sklearn.model_selection import train_test_split
 
-def fbip(net, k=0.5):
-    """ bipolar sigmoid (tanh) activation, overflow-safe """
-    val = -2 * k * net
-    if val > 709:    # avoid overflow of exp
-        return -1.0
-    if val < -709:
+
+def soft_unipolar(net):
+    """Sigmoid activation [0,1]"""
+    if net > 709:  # avoid overflow of exp
         return 1.0
-    return 2.0 / (1.0 + math.exp(val)) - 1.0
+    if net < -709:
+        return 0.0
+    return 1.0 / (1.0 + math.exp(-net))
 
-def fHard(net, threshold=0):
-    """ hard activation """
-    return 1 if net > threshold else -1
+def hard_unipolar(net, threshold=0):
+    """Step function [0,1]"""
+    return 1 if net > threshold else 0
 
 def confusion_matrix(true, pred, name="", file_name=""):
+    """Calculate confusion matrix for 0/1 labels"""
     tp = sum((t == 1 and p == 1) for t, p in zip(true, pred))
-    tn = sum((t == -1 and p == -1) for t, p in zip(true, pred))
-    fp = sum((t == -1 and p == 1) for t, p in zip(true, pred))
-    fn = sum((t == 1 and p == -1) for t, p in zip(true, pred))
-    acc = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0.0
-    print(f"\nConfusion Matrix ({file_name} , {name}):")
-    print(f"TP={tp}, FP={fp}")
-    print(f"FN={fn}, TN={tn}")
+    tn = sum((t == 0 and p == 0) for t, p in zip(true, pred))
+    fp = sum((t == 0 and p == 1) for t, p in zip(true, pred))
+    fn = sum((t == 1 and p == 0) for t, p in zip(true, pred))
+    
+    total = tp + tn + fp + fn
+    acc = (tp + tn) / total if total > 0 else 0.0
+    
+    print(f"\nConfusion Matrix ({file_name}, {name}):")
+    print(f"           Predicted")
+    print(f"           0    1")
+    print(f"Actual 0  {tn:3}  {fp:3}")
+    print(f"       1  {fn:3}  {tp:3}")
     print(f"Accuracy: {acc:.3f}")
+    
+    if tp + fn > 0:
+        tpr = tp / (tp + fn)
+        print(f"True Positive Rate: {tpr:.3f}")
+    if tn + fp > 0:
+        tnr = tn / (tn + fp)
+        print(f"True Negative Rate: {tnr:.3f}")
+    if fp + tn > 0:
+        fpr = fp / (fp + tn)
+        print(f"False Positive Rate: {fpr:.3f}")
+    if fn + tp > 0:
+        fnr = fn / (fn + tp)
+        print(f"False Negative Rate: {fnr:.3f}")
+
+    return {"tp": tp, "tn": tn, "fp": fp, "fn": fn, "acc": acc}
 
 # Training parameters
 max_epochs = 5000
-alpha = 0.1
-k = 0.5        # gain for soft activation
+alpha = 0.01  
+gain = 0.5    # gain for soft activation
 
 datasetDirectory = "datasets"
 csvFiles = [os.path.join(datasetDirectory, file) for file in os.listdir(datasetDirectory) if file.endswith('.csv')]
 
 # optional thresholds you had; used as epoch stopping threshold for soft (mean tanh error)
-errorRates = [40, 700, 0.000001]
+errorRates = [0.00001, 40, 700]
 
-csvIterable = 0
-for file in csvFiles:
-    print(f"\n=== Training on file: {file} ===\n")
+learning_rates = [0.1, 0.05, 0.01]  # A, B, C
+
+# gain for soft activation
+gain = 1.0
+
+# train/test splits 
+splits = [
+    ("75/25", 0.75),
+    ("25/75", 0.25)
+]
+
+for csvIterable, file in enumerate(csvFiles):
+    print(f"\n{'='*60}")
+    print(f"Training on file: {file}")
+    print(f"{'='*60}\n")
 
     # Read raw feature columns (no bias) and labels
     raw_features = []
@@ -51,8 +85,8 @@ for file in csvFiles:
     with open(file, 'r', newline='') as infile:
         reader = csv.reader(infile)
         for row in reader:
-            raw_features.append([float(row[0]), float(row[1])])  # price, weight
-            Y.append(1 if int(row[2]) == 1 else -1)
+            raw_features.append([float(row[0]), float(row[1])]) # price, weight
+            Y.append(int(row[2]))  # 0/1 for unipolar
 
     raw_features = np.array(raw_features)
     Y = np.array(Y)
@@ -63,133 +97,162 @@ for file in csvFiles:
     scaled_feats = scaler.fit_transform(raw_features)
 
     # Build X with constant bias=1 column (NOT scaled)
-    X = np.hstack([scaled_feats, np.ones((n_samples, 1), dtype=float)])  # shape (n, 3)
+    X = np.hstack([scaled_feats, np.ones((n_samples, 1))])
     npats, ni = X.shape
 
-    # --- SOFT TRAINING ---
-    weights_soft = np.array([uniform(-0.5, 0.5) for _ in range(ni)])
-    weight_history_soft = [weights_soft.copy()]
+    print(f"Dataset: {npats} samples, {ni} features (including bias)")
+    print(f"Class distribution: {np.sum(Y==0)} class 0, {np.sum(Y==1)} class 1")
 
-    epochs_soft = 0
-    for epoch in range(max_epochs):
-        epochs_soft += 1
-        for p in range(npats):
-            net = np.dot(weights_soft, X[p])
-            out = fbip(net, k)
-            err = Y[p] - out
-            learn = alpha * err
-            weights_soft = weights_soft + learn * X[p]
+    for split_name, train_size in splits:
+        print(f"\n{'='*60}")
+        print(f"Split: {split_name}")
+        print(f"{'='*60}")
+        
+        # split the data
+        indices = np.arange(npats)
+        train_idx, test_idx = train_test_split(
+            indices, train_size=train_size, random_state=42, stratify=Y
+        )
+        
+        X_train = X[train_idx]
+        X_test = X[test_idx]
+        y_train = Y[train_idx]
+        y_test = Y[test_idx]
+        
+        npats_train = len(X_train)
+        npats_test = len(X_test)
+        
+        alpha = learning_rates[csvIterable]
+        
+        print(f"Training: {npats_train} samples, Testing: {npats_test} samples")
+        print(f"Learning rate: {alpha}")
 
-        weight_history_soft.append(weights_soft.copy())
+        
+        # --- SOFT TRAINING ---
+        print(f"\n--- Soft Unipolar Training ---")
+        weights_soft = np.array([uniform(-0.5, 0.5) for _ in range(ni)])
+        
+        epochs_soft = 0
+        for epoch in range(max_epochs):
+            epochs_soft += 1
+            total_error = 0
+            
+            for p in range(npats_train): 
+                net = gain * np.dot(weights_soft, X_train[p]) 
+                out = soft_unipolar(net)
+                err = y_train[p] - out  
+                total_error += err ** 2
+                weights_soft += alpha * err * X_train[p] 
+            
+            # check stopping criterion
+            if total_error < errorRates[csvIterable]:
+                print(f"Converged at epoch {epochs_soft} with Total Error: {total_error:.6f}")
+                break
+        
+        if epochs_soft == max_epochs:
+            print(f"Max epochs reached. Final Total Error: {total_error:.6f}")
+            
+        # --- HARD UNIPOLAR TRAINING ---
+        print(f"\n--- Hard Unipolar Training ---")
+        weights_hard = np.array([uniform(-0.5, 0.5) for _ in range(ni)])
+        
+        epochs_hard = 0
+        for epoch in range(max_epochs):
+            epochs_hard += 1
+            total_error = 0
+            
+            for p in range(npats_train): 
+                net = np.dot(weights_hard, X_train[p]) 
+                out = hard_unipolar(net)
+                err = y_train[p] - out  
+                total_error += err ** 2
+                weights_hard += alpha * err * X_train[p] 
+            
+            # stop when perfect classification achieved
+            if total_error == 0 or total_error < errorRates[csvIterable]:
+                print(f"Converged at epoch {epochs_hard} with Total Error: {total_error:.6f}")
+                break
+        
+        if epochs_hard == max_epochs:
+            print(f"Max epochs reached. Final Total Error: {total_error:.6f}")
 
-        # compute mean absolute tanh error this epoch (aggregate measure)
-        epoch_err = np.mean([abs(Y[p] - fbip(np.dot(weights_soft, X[p]), k)) for p in range(npats)])
-        # use provided errorRates threshold if it makes sense, otherwise don't stop too early
-        threshold = errorRates[csvIterable] if csvIterable < len(errorRates) else 0.0
-        if epoch_err < threshold:
-            break
+        # --- Evaluation (both) ---
 
-    print(f"Soft training finished after {epochs_soft} epochs. Final mean tanh error: {epoch_err:.6f}")
+        # evaluate soft on training set
+        pred_soft_train = []
+        for p in range(npats_train):
+            net = gain * np.dot(weights_soft, X_train[p])
+            out = soft_unipolar(net)
+            pred = 1 if out > 0.5 else 0
+            pred_soft_train.append(pred)
 
-    # --- HARD TRAINING (Perceptron rule with step activation) ---
-    weights_hard = np.array([uniform(-0.5, 0.5) for _ in range(ni)])
-    weight_history_hard = [weights_hard.copy()]
+        print("\n[TRAINING SET]")
+        confusion_matrix(y_train, pred_soft_train, "Soft Training", os.path.basename(file))
 
-    epochs_hard = 0
-    for epoch in range(max_epochs):
-        epochs_hard += 1
-        for p in range(npats):
-            net = np.dot(weights_hard, X[p])
-            out = fHard(net)
-            err = Y[p] - out
-            learn = alpha * err
-            weights_hard = weights_hard + learn * X[p]
+        # evaluate soft on testing set
+        pred_soft_test = []
+        for p in range(npats_test):
+            net = gain * np.dot(weights_soft, X_test[p])
+            out = soft_unipolar(net)
+            pred = 1 if out > 0.5 else 0
+            pred_soft_test.append(pred)
 
-        weight_history_hard.append(weights_hard.copy())
+        print("\n[TESTING SET]")
+        confusion_matrix(y_test, pred_soft_test, "Soft Testing", os.path.basename(file))
+        
+        # evaluate on training set
+        pred_hard_train = []
+        for p in range(npats_train):
+            net = np.dot(weights_hard, X_train[p])
+            out = hard_unipolar(net)
+            pred = out 
+            pred_hard_train.append(pred)
 
-        # stop when perfect classification achieved
-        preds = [fHard(np.dot(weights_hard, X[p])) for p in range(npats)]
-        mis = sum(1 for t, pr in zip(Y, preds) if t != pr)
-        if mis == 0:
-            break
+        print("\n[TRAINING SET]")
+        confusion_matrix(y_train, pred_hard_train, "Hard Training", os.path.basename(file))
 
-    print(f"Hard training finished after {epochs_hard} epochs. Misclassifications: {mis}")
+        # evaluate on testing set
+        pred_hard_test = []
+        for p in range(npats_test):
+            net = np.dot(weights_hard, X_test[p])
+            out = hard_unipolar(net)
+            pred = out
+            pred_hard_test.append(pred)
 
-    # --- Evaluation (both) ---
-    all_pred_soft_train = []
-    for p in range(npats):
-        net = np.dot(weights_soft, X[p])
-        pred = 1 if fbip(net, k) > 0 else -1
-        all_pred_soft_train.append(pred)
-    confusion_matrix(Y, all_pred_soft_train, "Soft Training", os.path.basename(file))
-
-    all_pred_hard_train = []
-    for p in range(npats):
-        net = np.dot(weights_hard, X[p])
-        pred = fHard(net)
-        all_pred_hard_train.append(pred)
-    confusion_matrix(Y, all_pred_hard_train, "Hard Training", os.path.basename(file))
-
-    # --- Plot decision boundaries ---
-    plt.figure(figsize=(7,7))
-    plt.axhline(0, color="black", linewidth=0.5)
-    plt.axvline(0, color="black", linewidth=0.5)
-
-    # plot training points (scaled features)
-    for p in range(npats):
-        plt.scatter(X[p][0], X[p][1],
-                    color="red" if Y[p] == -1 else "blue",
-                    label="d=-1" if (Y[p] == -1 and p == 0) else "d=+1" if (Y[p] == 1 and p == 0) else "")
-
-    # prepare x range in scaled feature space
-    pad = 0.2
-    x_min, x_max = X[:,0].min(), X[:,0].max()
-    y_min, y_max = X[:,1].min(), X[:,1].max()
-    x_vals = np.linspace(x_min - pad, x_max + pad, 200)
-
-    # Soft boundaries: sample up to N lines for clarity (avoid plotting thousands)
-    n_history = len(weight_history_soft)
-    max_lines = 60
-    if n_history <= max_lines:
-        indices = list(range(n_history))
-    else:
-        indices = np.linspace(0, n_history - 1, max_lines, dtype=int)
-
-    colors = plt.cm.plasma(np.linspace(0, 1, len(indices)))
-    for idx, col in zip(indices, colors):
-        w = weight_history_soft[idx]
-        w0, w1, w2 = w  # w0* x + w1* y + w2*1 = 0
+        print("\n[TESTING SET]")
+        confusion_matrix(y_test, pred_hard_test, "Hard Testing", os.path.basename(file))
+            
+        # --- Plot Decision Boundaries ---
+        plt.figure(figsize=(10, 8))
+        
+        # Plot data points
+        class_0 = X[Y == 0]
+        class_1 = X[Y == 1]
+        plt.scatter(class_0[:, 0], class_0[:, 1], c='red', marker='o', label='Class 0', s=50, edgecolors='k')
+        plt.scatter(class_1[:, 0], class_1[:, 1], c='blue', marker='s', label='Class 1', s=50, edgecolors='k')
+        
+        # Plot decision boundaries
+        x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
+        x_vals = np.linspace(x_min, x_max, 300)
+        
+        # final soft boundary (emphasize)
+        w0, w1, w2 = weights_soft
         if abs(w1) > 1e-12:
-            y_vals = -(w0 / w1) * x_vals - (w2 / w1)
-        else:
-            y_vals = np.full_like(x_vals, -w2 / w0 if abs(w0) > 1e-12 else y_min)
-        alpha_line = 0.5 if idx != indices[-1] else 0.95
-        lw = 1.0 if idx != indices[-1] else 2.0
-        plt.plot(x_vals, y_vals, color=col, alpha=alpha_line, linewidth=lw,
-                 label="Soft boundary (final)" if idx == indices[-1] else None)
-
-    # final soft boundary (emphasize)
-    final_soft = weight_history_soft[-1]
-    w0, w1, w2 = final_soft
-    if abs(w1) > 1e-12:
-        y_vals = -(w0 / w1) * x_vals - (w2 / w1)
-    else:
-        y_vals = np.full_like(x_vals, -w2 / w0 if abs(w0) > 1e-12 else y_min)
-    plt.plot(x_vals, y_vals, color="red", linestyle='-', linewidth=2.5, label="Soft final")
-
-    # final hard boundary
-    final_hard = weight_history_hard[-1]
-    w0, w1, w2 = final_hard
-    if abs(w1) > 1e-12:
-        y_vals = -(w0 / w1) * x_vals - (w2 / w1)
-    else:
-        y_vals = np.full_like(x_vals, -w2 / w0 if abs(w0) > 1e-12 else y_min)
-    plt.plot(x_vals, y_vals, color="green", linestyle="--", linewidth=2.5, label="Hard final")
-
-    plt.xlim(x_min - pad, x_max + pad)
-    plt.ylim(y_min - pad, y_max + pad)
-    plt.title(f"Soft vs Hard Perceptron Training ({os.path.basename(file)})")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper_left' if hasattr(plt, 'upper_left') else 'upper left')
-    plt.show()
-
+            y_soft = -(w0 / w1) * x_vals - (w2 / w1)
+            plt.plot(x_vals, y_soft, 'r-', linewidth=2.5, label='Soft Unipolar')
+        
+        # final hard boundary
+        w0, w1, w2 = weights_hard
+        if abs(w1) > 1e-12:
+            y_hard = -(w0 / w1) * x_vals - (w2 / w1)
+            plt.plot(x_vals, y_hard, 'g--', linewidth=2.5, label='Hard Unipolar')
+        
+        plt.xlabel('Feature 1 (scaled)')
+        plt.ylabel('Feature 2 (scaled)')
+        plt.title(f'Decision Boundaries - {os.path.basename(file)}')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+        
     csvIterable += 1
