@@ -223,36 +223,89 @@ for csvIterable, file in enumerate(csvFiles):
         confusion_matrix(y_test, pred_hard_test, "Hard Testing", os.path.basename(file))
             
         # --- Plot Decision Boundaries ---
-        plt.figure(figsize=(10, 8))
         
-        # Plot data points
-        class_0 = X[Y == 0]
-        class_1 = X[Y == 1]
-        plt.scatter(class_0[:, 0], class_0[:, 1], c='red', marker='o', label='Class 0', s=50, edgecolors='k')
-        plt.scatter(class_1[:, 0], class_1[:, 1], c='blue', marker='s', label='Class 1', s=50, edgecolors='k')
+        # TRAINING DATA PLOTS
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+        
+        # Plot data points - Soft activation training
+        ax1.scatter(X_train[y_train==0][:, 0], X_train[y_train==0][:, 1], 
+                    c='red', marker='o', label='Class 0', s=50, edgecolors='k')
+        ax1.scatter(X_train[y_train==1][:, 0], X_train[y_train==1][:, 1], 
+                    c='blue', marker='s', label='Class 1', s=50, edgecolors='k')
         
         # Plot decision boundaries
-        x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
-        x_vals = np.linspace(x_min, x_max, 300)
+        x_vals = np.linspace(X_train[:, 0].min()-0.5, X_train[:, 0].max()+0.5, 300)
+        w0, w1, w2 = weights_soft
         
         # final soft boundary (emphasize)
-        w0, w1, w2 = weights_soft
         if abs(w1) > 1e-12:
-            y_soft = -(w0 / w1) * x_vals - (w2 / w1)
-            plt.plot(x_vals, y_soft, 'r-', linewidth=2.5, label='Soft Unipolar')
+            y_soft = -(w0/w1)*x_vals - (w2/w1)
+            ax1.plot(x_vals, y_soft, 'g-', linewidth=2.5, label='Soft Unipolar')
+        ax1.set_xlabel('Feature 1 (scaled)')
+        ax1.set_ylabel('Feature 2 (scaled)')
+        ax1.set_title(f'TRAINING - Soft - {split_name}')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot data points - Hard activation training
+        ax2.scatter(X_train[y_train==0][:, 0], X_train[y_train==0][:, 1], 
+                    c='red', marker='o', label='Class 0', s=50, edgecolors='k')
+        ax2.scatter(X_train[y_train==1][:, 0], X_train[y_train==1][:, 1], 
+                    c='blue', marker='s', label='Class 1', s=50, edgecolors='k')
         
         # final hard boundary
         w0, w1, w2 = weights_hard
         if abs(w1) > 1e-12:
             y_hard = -(w0 / w1) * x_vals - (w2 / w1)
-            plt.plot(x_vals, y_hard, 'g--', linewidth=2.5, label='Hard Unipolar')
+            ax2.plot(x_vals, y_hard, 'purple', linestyle='--', linewidth=2.5, label='Hard Unipolar')
+        ax2.set_xlabel('Feature 1 (scaled)')
+        ax2.set_ylabel('Feature 2 (scaled)')
+        ax2.set_title(f'TRAINING - Hard - {split_name}')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
         
-        plt.xlabel('Feature 1 (scaled)')
-        plt.ylabel('Feature 2 (scaled)')
-        plt.title(f'Decision Boundaries - {os.path.basename(file)}')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.show()
         
-    csvIterable += 1
+        # TESTING DATA PLOTS
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+        
+        # Plot data points - Soft activation testing
+        ax1.scatter(X_test[y_test==0][:, 0], X_test[y_test==0][:, 1], 
+                    c='red', marker='o', label='Class 0', s=50, edgecolors='k')
+        ax1.scatter(X_test[y_test==1][:, 0], X_test[y_test==1][:, 1], 
+                    c='blue', marker='s', label='Class 1', s=50, edgecolors='k')
+        
+        # Plot decision boundaries
+        x_vals_test = np.linspace(X_test[:, 0].min()-0.5, X_test[:, 0].max()+0.5, 300)
+        w0, w1, w2 = weights_soft
+        
+        # final soft boundary (emphasize)
+        if abs(w1) > 1e-12:
+            y_soft = -(w0/w1)*x_vals_test - (w2/w1)
+            ax1.plot(x_vals_test, y_soft, 'g-', linewidth=2.5, label='Soft Unipolar')
+        ax1.set_xlabel('Feature 1 (scaled)')
+        ax1.set_ylabel('Feature 2 (scaled)')
+        ax1.set_title(f'TESTING - Soft - {split_name}')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot data points - Hard activation testing
+        ax2.scatter(X_test[y_test==0][:, 0], X_test[y_test==0][:, 1], 
+                    c='red', marker='o', label='Class 0', s=50, edgecolors='k')
+        ax2.scatter(X_test[y_test==1][:, 0], X_test[y_test==1][:, 1], 
+                    c='blue', marker='s', label='Class 1', s=50, edgecolors='k')
+        
+        # final hard boundary
+        w0, w1, w2 = weights_hard
+        if abs(w1) > 1e-12:
+            y_hard = -(w0 / w1) * x_vals_test - (w2 / w1)
+            ax2.plot(x_vals_test, y_hard, 'purple', linestyle='--', linewidth=2.5, label='Hard Unipolar')
+        ax2.set_xlabel('Feature 1 (scaled)')
+        ax2.set_ylabel('Feature 2 (scaled)')
+        ax2.set_title(f'TESTING - Hard - {split_name}')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
