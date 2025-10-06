@@ -7,12 +7,8 @@ import matplotlib.pyplot as plt
 import os
 
 # grab all files to run at once
-datasetDirectory = "datasets"
+datasetDirectory = "project_1/datasets"
 csvFiles = [os.path.join(datasetDirectory, file) for file in os.listdir(datasetDirectory) if file.endswith('.csv')]
-
-# storage to calc confusion matrix
-all_true_labels = []
-all_predictions = []
 
 # iterate through all files.
 for file in csvFiles:
@@ -41,11 +37,30 @@ for file in csvFiles:
     n_data_scaled = scaler.transform(n_data)
     n_pred = model.predict(n_data_scaled)
 
+    print(f"\nFile: {os.path.basename(file)}")
     print(f"Predictions for {n_data.tolist()} -> {n_pred.tolist()}")
 
-    all_true_labels.extend(Y)
-    all_predictions.extend(pred)
+    # --- Confusion Matrix and Accuracy for this file ---
+    cm = confusion_matrix(Y, pred)
+    tn, fp, fn, tp = cm.ravel()
 
+    accuracy = accuracy_score(Y, pred)
+    error_rate = 1 - accuracy
+    true_positive_rate = tp / (tp + fn)
+    true_negative_rate = tn / (tn + fp)
+    false_positive_rate = fp / (fp + tn)
+    false_negative_rate = fn / (fn + tp)
+
+    print("Confusion Matrix:")
+    print(cm)
+    print(f"Accuracy: {accuracy:.2f}")
+    print(f"Error Rate: {error_rate:.2f}")
+    print(f"True Positive Rate (Sensitivity): {true_positive_rate:.2f}")
+    print(f"True Negative Rate (Specificity): {true_negative_rate:.2f}")
+    print(f"False Positive Rate: {false_positive_rate:.2f}")
+    print(f"False Negative Rate: {false_negative_rate:.2f}")
+
+    # --- Plot Decision Boundary for this file ---
     plt.figure()
 
     w = model.coef_[0]
@@ -67,24 +82,5 @@ for file in csvFiles:
     plt.title(f"Linear SVM Decision Boundary for {os.path.basename(file)}")
 
     plt.show(block=False)
-
-cm = confusion_matrix(all_true_labels, all_predictions)
-tn, fp, fn, tp = cm.ravel()
-
-accuracy = accuracy_score(all_true_labels, all_predictions)
-error_rate = 1 - accuracy
-true_positive_rate = tp / (tp + fn)
-true_negative_rate = tn / (tn + fp)
-false_positive_rate = fp / (fp + tn)
-false_negative_rate = fn / (fn + tp)
-
-print("Confusion Matrix:")
-print(cm)
-print(f"Accuracy: {accuracy:.2f}")
-print(f"Error Rate: {error_rate:.2f}")
-print(f"True Positive Rate (Sensitivity): {true_positive_rate:.2f}")
-print(f"True Negative Rate (Specificity): {true_negative_rate:.2f}")
-print(f"False Positive Rate: {false_positive_rate:.2f}")
-print(f"False Negative Rate: {false_negative_rate:.2f}")
 
 plt.show()
